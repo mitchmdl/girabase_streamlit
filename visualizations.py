@@ -1,3 +1,5 @@
+--- START OF FILE visualizations.py ---
+
 import matplotlib.pyplot as plt
 import plotly.graph_objects as go
 import plotly.express as px
@@ -6,7 +8,7 @@ import numpy as np
 import pandas as pd
 from matplotlib.patches import Circle, Wedge, Rectangle
 import matplotlib.transforms as transforms
-import matplotlib.cm as cm
+import matplotlib as mpl
 
 def generer_heatmap_od(matrice_od):
     """Génère une heatmap Seaborn à partir de la matrice O/D."""
@@ -21,7 +23,7 @@ def generer_heatmap_od(matrice_od):
     plt.tight_layout()
     return fig
 
-def dessiner_schema_giratoire(donnees_branches, diametre_exterieur, matrice_od): # NOUVEAU : argument matrice_od
+def dessiner_schema_giratoire(donnees_branches, diametre_exterieur, matrice_od):
     """
     Génère un schéma vectoriel du giratoire coloré selon la charge,
     avec des flèches courbes montrant les flux O/D.
@@ -39,13 +41,16 @@ def dessiner_schema_giratoire(donnees_branches, diametre_exterieur, matrice_od):
     # --- Facteur d'échelle pour la largeur ---
     Echelle_Largeur = 1.0 / 3.5 
     
-    # --- palette de couleurs pour les origines ---
-    # Nous utilisons une palette de couleurs distinctes, une par branche
-    color_palette = cm.get_cmap('tab10', nb_branches)
+    # Palette moderne compatible toutes versions Matplotlib
+    try:
+        base_colors = mpl.colormaps['tab10'].resampled(nb_branches)
+    except AttributeError:
+        # Fallback pour anciennes versions < 3.7
+        base_colors = plt.get_cmap('tab10', nb_branches)
     
     # --- 1. Dessin de l'anneau (gris clair) ---
     anneau = Wedge((0, 0), r_ext, 0, 360, width=largeur_chaussee_annulaire, 
-                   facecolor='#ecf0f1', edgecolor='#34495e', linewidth=2, zorder=1) # zorder 1
+                   facecolor='#ecf0f1', edgecolor='#34495e', linewidth=2, zorder=1)
     ax.add_patch(anneau)
     
     ilot_central = Circle((0, 0), r_int, facecolor='#bdc3c7', 
@@ -54,16 +59,12 @@ def dessiner_schema_giratoire(donnees_branches, diametre_exterieur, matrice_od):
 
     # --- 2. Dessin et coloration des branches (zorder 10, dessus) ---
     angles = np.linspace(0, 360, nb_branches, endpoint=False)
-    
-    # Palette de base pour les origines
-    base_colors = cm.get_cmap('tab10', nb_branches)
 
     for i_ori in range(nb_branches):
         # Couleur spécifique pour l'origine avec un léger dégradé selon l'indice
         couleur_base = base_colors(i_ori)
         
         # Calcul du rayon pour ce couloir spécifique (du plus externe au plus interne)
-        # Le couloir de la branche 1 est le plus à l'extérieur, etc.
         r_couloir_ext = r_ext - (i_ori * largeur_couloir)
         
         for i_des in range(nb_branches):
@@ -81,7 +82,7 @@ def dessiner_schema_giratoire(donnees_branches, diametre_exterieur, matrice_od):
             a_end = angles[i_des]
             if a_end < a_start: a_end += 360
             
-            # Dessin de l'arc avec dégradé (alpha variable selon la destination pour l'effet visuel)
+            # Dessin de l'arc avec dégradé
             alpha_val = 0.8 - (i_des * 0.05) 
             
             arc_flux = Wedge((0, 0), r_couloir_ext, a_start, a_end, 
@@ -91,14 +92,13 @@ def dessiner_schema_giratoire(donnees_branches, diametre_exterieur, matrice_od):
             ax.add_patch(arc_flux)
             
             # Ajout d'une flèche directionnelle à la fin de l'arc
-            # On calcule la pointe à l'angle a_end
             rad_end = np.deg2rad(a_end)
             ax.annotate("", xy=(r_couloir_ext * np.cos(rad_end), r_couloir_ext * np.sin(rad_end)),
                         xytext=((r_couloir_ext - 0.1) * np.cos(rad_end - 0.1), (r_couloir_ext - 0.1) * np.sin(rad_end - 0.1)),
                         arrowprops=dict(arrowstyle="->", color=couleur_base, lw=2, alpha=0.8),
                         zorder=4)
 
-    # --- 3. Dessin des Branches (inchangé mais r_ext dynamique) ---
+    # --- 3. Dessin des Branches ---
     for i, angle_deg in enumerate(angles):
         info = donnees_branches[i]
         rect = Rectangle((r_ext, -info['Largeur']/7), 5, info['Largeur']/3.5, 
@@ -143,7 +143,6 @@ def plot_chord_diagram(matrice_od):
     n = len(matrice_od)
     sources, targets, values, colors_links = [], [], [], []
     
-    # Palette Plotly standard (10 couleurs)
     palette = px.colors.qualitative.Plotly 
 
     for i in range(n): # Origines
@@ -153,14 +152,10 @@ def plot_chord_diagram(matrice_od):
                 targets.append(j + n)
                 values.append(matrice_od[i][j])
                 
-                # Correction de la couleur : 
-                # On récupère la couleur de l'origine (i) et on ajoute de l'alpha (0.4)
                 base_color = palette[i % len(palette)]
                 if base_color.startswith('#'):
-                    # Si c'est du HEX, conversion simple ou utilisation tel quel
                     colors_links.append(base_color) 
                 else:
-                    # Si c'est du rgb, on force rgba pour la transparence
                     rgba_color = base_color.replace('rgb', 'rgba').replace(')', ', 0.4)')
                     colors_links.append(rgba_color)
 
@@ -170,14 +165,13 @@ def plot_chord_diagram(matrice_od):
             thickness=20,
             line=dict(color="white", width=0.5),
             label=[f"Entrée B{i+1}" for i in range(n)] + [f"Sortie B{i+1}" for i in range(n)],
-            # Nœuds d'entrée colorés, nœuds de sortie grisés
             color=palette[:n] + ["#bdc3c7"] * n 
         ),
         link=dict(
             source=sources, 
             target=targets, 
             value=values,
-            color=colors_links # S'assurer que cette liste a la même longueur que sources
+            color=colors_links
         )
     )])
 
