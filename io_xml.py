@@ -4,57 +4,50 @@ import pandas as pd
 import numpy as np
 
 def exporter_xml(diametre, branches_config, mode_expert, t0, ts, matrice_od):
-    """
-    Exporte la configuration complète du carrefour sous format XML formaté.
-    """
+    """Exporte toute la configuration, y compris l'intégralité de la matrice O/D."""
     root = ET.Element("girabase_configuration", version="1.0")
     
-    # 1. Géométrie générale
+    # 1. Géométrie
     geom = ET.SubElement(root, "geometrie")
-    ET.SubElement(geom, "diametre_exterieur").text = str(diametre)
+    ET.SubElement(geom, "diametre_exterieur").text = str(float(diametre))
     
-    # 2. Configuration des branches
+    # 2. Branches
     branches_elem = ET.SubElement(geom, "branches", count=str(len(branches_config)))
     for i, b in enumerate(branches_config):
         ET.SubElement(
             branches_elem, 
             "branche", 
             id=str(i + 1),
-            voies=str(b["voies"]),
+            voies=str(int(b["voies"])),
             largeur=str(round(float(b["largeur"]), 2))
         )
         
     # 3. Paramètres avancés
     expert_elem = ET.SubElement(root, "parametres_avances")
     ET.SubElement(expert_elem, "mode_expert").text = str(mode_expert).lower()
-    ET.SubElement(expert_elem, "t0").text = str(t0)
-    ET.SubElement(expert_elem, "ts").text = str(ts)
+    ET.SubElement(expert_elem, "t0").text = str(float(t0))
+    ET.SubElement(expert_elem, "ts").text = str(float(ts))
     
-    # 4. Matrice Origine-Destination
+    # 4. Matrice Origine-Destination (toutes les cellules avec valeurs)
     n = len(matrice_od)
     od_elem = ET.SubElement(root, "matrice_od", dimensions=f"{n}x{n}")
     for i in range(n):
         for j in range(n):
             val = float(matrice_od[i][j])
-            if val > 0:  # Enregistre les flux non nuls
-                ET.SubElement(
-                    od_elem, 
-                    "flux", 
-                    origine=str(i + 1), 
-                    destination=str(j + 1)
-                ).text = str(val)
+            ET.SubElement(
+                od_elem, 
+                "flux", 
+                origine=str(i + 1), 
+                destination=str(j + 1)
+            ).text = str(int(val) if val.is_integer() else val)
                 
-    # Conversion en chaîne XML indentée
     raw_xml = ET.tostring(root, encoding="utf-8")
     parsed = minidom.parseString(raw_xml)
     return parsed.toprettyxml(indent="  ", encoding="utf-8").decode("utf-8")
 
 
 def importer_xml(fichier_xml):
-    """
-    Lit et valide un fichier XML de configuration.
-    Retourne un dictionnaire contenant les paramètres chargés.
-    """
+    """Charge et reconstruit fidèlement la géométrie et la matrice OD depuis le XML."""
     tree = ET.parse(fichier_xml)
     root = tree.getroot()
     
@@ -83,7 +76,7 @@ def importer_xml(fichier_xml):
     ts = float(expert_elem.find("ts").text)
     
     # Matrice OD
-    matrice = np.zeros((nb_branches, nb_branches))
+    matrice = np.zeros((nb_branches, nb_branches), dtype=float)
     od_elem = root.find("matrice_od")
     if od_elem is not None:
         for flux in od_elem.findall("flux"):
