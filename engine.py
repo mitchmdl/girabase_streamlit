@@ -1,24 +1,14 @@
 import numpy as np
 
 def calculer_capacite_girabase(Q_genant, largeur_entree, nb_voies_entree, diametre_exterieur, t0=None, ts=None):
-    """
-    Calcule la capacité d'une branche selon une approche inspirée du modèle SETRA/CEREMA.
-    
-    Paramètres :
-    - Q_genant : Débit sur l'anneau (uvp/h) qui coupe la trajectoire d'entrée.
-    - largeur_entree : Largeur de la chaussée en entrée (m).
-    - nb_voies_entree : Nombre de voies de la branche.
-    - diametre_exterieur : Diamètre extérieur de l'anneau (m).
-    """
+    """Calcule la capacité d'entrée selon l'approche SETRA/CEREMA."""
     nb_voies_entree = int(nb_voies_entree)
     
     if t0 and ts:
-        # Modèle théorique (Type Harders simplifié)
         A = 3600 / ts
         B = (t0 - (ts / 2)) / 3600
         capacite = A * np.exp(-B * Q_genant)
     else:
-        # Modèle empirique Girabase standard
         if nb_voies_entree == 1:
             A = 1350 + 10 * (largeur_entree - 3.5)
             B = 0.0007
@@ -30,45 +20,25 @@ def calculer_capacite_girabase(Q_genant, largeur_entree, nb_voies_entree, diamet
         elif diametre_exterieur > 50: A *= 1.05
         capacite = A * np.exp(-B * Q_genant)
     
-    return round(float(capacite))
+    return max(1, round(float(capacite)))
 
 def calculer_capacite_sortie(largeur_sortie, nb_voies_sortie):
-    """
-    Estime la capacité d'évacuation d'une branche.
-    Standard : ~1200 à 1500 uvp/h par voie de sortie.
-    """
     return int(nb_voies_sortie) * 1500 + (100 * (largeur_sortie - (int(nb_voies_sortie) * 3.5)))
 
 def calculer_flux_circulant(matrice_od):
-    """
-    Calcule le flux circulant (Qg) devant chaque entrée i.
-    Logique : Un flux de l'origine j vers la destination k gêne l'entrée i 
-    si l'entrée i se trouve physiquement entre j et k sur l'anneau.
-    """
     n = len(matrice_od)
     q_genant = [0] * n
     q_sortant = [0] * n
     
     for i in range(n):
         flux_cumule = 0
-        # On parcourt toutes les combinaisons Origine (j) -> Destination (k)
         for j in range(n):
             for k in range(n):
                 if j == k:
                     continue
-                
-                # Flux sortant à la branche i
                 if k == i:
                     q_sortant[i] += matrice_od[j][k]
                 
-                # Un véhicule venant de j et allant vers k gêne l'entrée i si :
-                # 1. Il n'est pas originaire de i (j != i)
-                # 2. Il ne sort pas à i (k != i)
-                # 3. Son trajet sur l'anneau passe devant l'entrée i.
-                
-                # Flux gênant devant l'entrée i
-                # Pour vérifier si i est sur le chemin entre j et k :
-                # On regarde si i est compris entre j et k dans le sens horaire.
                 if j < k:
                     if j < i < k:
                         flux_cumule += matrice_od[j][k]
@@ -80,10 +50,49 @@ def calculer_flux_circulant(matrice_od):
         
     return q_genant, q_sortant
 
-def evaluer_performance(debit_entrant, capacite):
+def calculer_files_et_retards(debit_entrant, capacite, duree_h=1.0):
     """
-    Calcule les indicateurs de performance.
+    Calcule le retard moyen (s/uvp), la file d'attente moyenne (uvp)
+    et la file au 95e percentile (L95 en uvp et m) selon la formulation Akçelik / Kimber-Hollis.
     """
-    reserve = max(0, capacite - debit_entrant)
-    taux_charge = debit_entrant / capacite if capacite > 0 else 1.0
-    return reserve, taux_charge
+    if capacite <= 0:
+        capacite = 1
+    
+    rho = debit_entrant / capacite
+    T = duree_h
+    C = capacite
+    
+    # Formule dépendant du temps (HCM / Kimber-Hollis / Akçelik)
+    terme_racine = (rho - 1)**2 + ( (3600 / C) * rho ) / (450 * T)
+    d_attente = (3600 / C) + 900 * T * ( (rho - 1) + np.sqrt(max(0.0, terme_racine)) )
+    retard_total_s = max(5.0, round(float(d_attente + 5.0), 1))  # +5s de retard géométrique
+    
+    # File moyenne (Loi de Little)
+    file_moyenne_uvp = (debit_entrant * (retard_total_s - 5.0)) / 3600.0
+    file_moyenne_uvp = max(0.0, round(float(file_moyenne_uvp), 1))
+    
+    # File L95 (percentile 95)
+    file_l95_uvp = round(float(file_moyenne_uvp + 1.96 * np.sqrt(max(0.1, file_moyenne_uvp))))
+    longueur_file_metres = int(file_l95_uvp * 6.0)  # ~6.0 m d'encombrement par uvp en file
+    
+    # Niveau de service (LOS : Level of Service)
+    if retard_total_s <= 10:
+        los = "A"
+    elif retard_total_s <= 15:
+        los = "B"
+    elif retard_total_s <= 25:
+        los = "C"
+    elif retard_total_s <= 35:
+        los = "D"
+    elif retard_total_s <= 50:
+        los = "E"
+    else:
+        los = "F"
+        
+    return {
+        "retard_s": retard_total_s,
+        "file_moyenne_uvp": file_moyenne_uvp,
+        "file_l95_uvp": file_l95_uvp,
+        "file_l95_m": longueur_file_metres,
+        "los": los
+    }

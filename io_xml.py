@@ -4,31 +4,28 @@ import pandas as pd
 import numpy as np
 
 def exporter_xml(diametre, branches_config, mode_expert, t0, ts, matrice_od):
-    """Exporte toute la configuration, y compris l'intégralité de la matrice O/D."""
-    root = ET.Element("girabase_configuration", version="1.0")
+    """Exporte la configuration incluant les noms personnalisés."""
+    root = ET.Element("girabase_configuration", version="1.1")
     
-    # 1. Géométrie
     geom = ET.SubElement(root, "geometrie")
     ET.SubElement(geom, "diametre_exterieur").text = str(float(diametre))
     
-    # 2. Branches
     branches_elem = ET.SubElement(geom, "branches", count=str(len(branches_config)))
     for i, b in enumerate(branches_config):
         ET.SubElement(
             branches_elem, 
             "branche", 
             id=str(i + 1),
+            nom=str(b.get("nom", f"Branche {i+1}")),
             voies=str(int(b["voies"])),
             largeur=str(round(float(b["largeur"]), 2))
         )
         
-    # 3. Paramètres avancés
     expert_elem = ET.SubElement(root, "parametres_avances")
     ET.SubElement(expert_elem, "mode_expert").text = str(mode_expert).lower()
     ET.SubElement(expert_elem, "t0").text = str(float(t0))
     ET.SubElement(expert_elem, "ts").text = str(float(ts))
     
-    # 4. Matrice Origine-Destination (toutes les cellules avec valeurs)
     n = len(matrice_od)
     od_elem = ET.SubElement(root, "matrice_od", dimensions=f"{n}x{n}")
     for i in range(n):
@@ -47,14 +44,13 @@ def exporter_xml(diametre, branches_config, mode_expert, t0, ts, matrice_od):
 
 
 def importer_xml(fichier_xml):
-    """Charge et reconstruit fidèlement la géométrie et la matrice OD depuis le XML."""
+    """Importe la configuration avec extraction des noms de branches."""
     tree = ET.parse(fichier_xml)
     root = tree.getroot()
     
     if root.tag != "girabase_configuration":
         raise ValueError("Le fichier XML n'est pas une configuration Girabase valide.")
     
-    # Géométrie
     geom = root.find("geometrie")
     diametre = float(geom.find("diametre_exterieur").text)
     
@@ -63,30 +59,30 @@ def importer_xml(fichier_xml):
     nb_branches = len(branches_list)
     
     branches_config = []
-    for b in branches_list:
+    for idx, b in enumerate(branches_list):
         branches_config.append({
+            "nom": b.attrib.get("nom", f"Branche {idx+1}"),
             "voies": int(b.attrib.get("voies", 1)),
             "largeur": float(b.attrib.get("largeur", 3.5))
         })
         
-    # Paramètres avancés
     expert_elem = root.find("parametres_avances")
     mode_expert = expert_elem.find("mode_expert").text.strip().lower() in ["true", "1"]
     t0 = float(expert_elem.find("t0").text)
     ts = float(expert_elem.find("ts").text)
     
-    # Matrice OD
-    matrice = np.zeros((nb_branches, nb_branches), dtype=float)
+    matrice = np.zeros((nb_branches, nb_branches), dtype=int)
     od_elem = root.find("matrice_od")
     if od_elem is not None:
         for flux in od_elem.findall("flux"):
             i = int(flux.attrib["origine"]) - 1
             j = int(flux.attrib["destination"]) - 1
             if 0 <= i < nb_branches and 0 <= j < nb_branches:
-                matrice[i][j] = float(flux.text)
+                matrice[i][j] = int(float(flux.text))
                 
-    cols = [f"Vers B{i+1}" for i in range(nb_branches)]
-    idx = [f"Depuis B{i+1}" for i in range(nb_branches)]
+    noms = [b["nom"] for b in branches_config]
+    cols = [f"Vers {n}" for n in noms]
+    idx = [f"Depuis {n}" for n in noms]
     df_od = pd.DataFrame(matrice, columns=cols, index=idx)
     
     return {
